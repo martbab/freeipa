@@ -26,7 +26,8 @@ from ipapython.admintool import ScriptError
 from ipaplatform import services
 from ipaplatform.tasks import tasks
 from ipaplatform.paths import paths
-from ipalib import api, certstore, constants, create_api, errors, rpc, x509
+from ipalib import (
+    api, certstore, constants, create_api, errors, host, rpc, x509)
 from ipalib.util import (
     network_ip_address_warning,
     broadcast_ip_address_warning,
@@ -796,6 +797,59 @@ def install(installer):
 
         # Install CA cert so that we can do SSL connections with ldap
         install_ca_cert(conn, api.env.basedn, api.env.realm, cafile)
+
+        installutils.check_creds(options, config.realm_name)
+        installer._ccache = os.environ.get('KRB5CCNAME')
+
+        # FIXME: simulate host enrollment by adding host entry, fetching host
+        # keytab and adding host to ipaservers group
+        print("Enrolling host to IPA domain")
+        result = remote_api.Command.host_add(unicode(config.host_name),
+                                             random=True)['result']
+
+        # mock options for enroll function for now. I don't have the nerve to
+        # go through them one by one
+
+        enrollment_opts = {
+            'sssd': False,
+            'force': False,
+            'principal': None,
+            'password': result['randompassword'],
+            'unattended': True,
+            'force_join': False,
+            'debug': False,
+            'keytab': None,
+            'prompt_password': False,
+            'kinit_attempts': 1,
+        }
+
+        class FakeNamespace(object):
+            def __init__(self, **kwargs):
+                self.__dict__.update(kwargs)
+
+            def __getattr__(self, key):
+                try:
+                    super(FakeNamespace, self).__getattr__(key)
+                except AttributeError:
+                    return None
+
+        fake_opts = FakeNamespace(**enrollment_opts)
+
+        ret = host.enroll(config.host_name,
+                          remote_api.env.realm,
+                          remote_api.env.domain,
+                          [config.master_host_name],
+                          config.master_host_name,
+                          config.host_name.partition(".")[-1],
+                          remote_api.env.basedn,
+                          False,
+                          fake_opts,
+                          os.environ)
+        if ret:
+            raise ScriptError("host enrollment failed")
+
+        remote_api.Command.hostgroup_add_member(
+            u'ipaservers', host=unicode(config.host_name))
 
         # Configure ntpd
         if not options.no_ntp:
