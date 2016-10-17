@@ -77,22 +77,8 @@ def make_pkcs12_info(directory, cert_name, password_name):
 
 
 def install_http_certs(config, fstore, remote_api):
-
-    # Obtain keytab for the HTTP service
-    fstore.backup_file(paths.IPA_KEYTAB)
-    try:
-        os.unlink(paths.IPA_KEYTAB)
-    except OSError:
-        pass
-
-    principal = 'HTTP/%s@%s' % (config.host_name, config.realm_name)
-    installutils.install_service_keytab(remote_api,
-                                        principal,
-                                        config.master_host_name,
-                                        paths.IPA_KEYTAB,
-                                        force_service_add=True)
-
     # Obtain certificate for the HTTP service
+    principal = 'HTTP/%s@%s' % (config.host_name, config.realm_name)
     nssdir = certs.NSS_DIR
     subject = DN(('O', config.realm_name))
     db = certs.CertDB(config.realm_name, nssdir=nssdir, subject_base=subject)

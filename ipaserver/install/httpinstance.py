@@ -215,11 +215,15 @@ class HTTPInstance(service.Service):
             self.print_msg(e.format_service_warning('web interface'))
 
     def __create_http_keytab(self):
-        if not self.promote:
-            installutils.remove_keytab(paths.IPA_KEYTAB)
-            installutils.kadmin_addprinc(self.principal)
-            installutils.create_keytab(paths.IPA_KEYTAB, self.principal)
-            self.move_service(self.principal)
+        """
+        create HTTP principal and store its keytab
+
+        this assumes that local DS and KDC are already up and running
+        """
+        installutils.remove_keytab(paths.IPA_KEYTAB)
+        installutils.kadmin_addprinc(self.principal)
+        installutils.create_keytab(paths.IPA_KEYTAB, self.principal)
+        self.move_service(self.principal)
 
         pent = pwd.getpwnam(HTTPD_USER)
         os.chown(paths.IPA_KEYTAB, pent.pw_uid, pent.pw_gid)
