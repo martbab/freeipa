@@ -391,11 +391,10 @@ class DsInstance(service.Service):
         self.__common_setup(enable_ssl=(not self.promote))
         self.step("restarting directory server", self.__restart_instance)
 
-        if self.promote:
-            self.step("creating DS keytab", self.__get_ds_keytab)
-            if self.ca_is_configured:
-                self.step("retrieving DS Certificate", self.__get_ds_cert)
-            self.step("restarting directory server", self.__restart_instance)
+        self.step("creating DS keytab", self.__get_ds_keytab)
+        if self.ca_is_configured and self.promote:
+            self.step("retrieving DS Certificate", self.__get_ds_cert)
+        self.step("restarting directory server", self.__restart_instance)
 
         self.step("setting up initial replication", self.__setup_replica)
         self.step("adding sasl mappings to the directory", self.__configure_sasl_mappings)
@@ -421,12 +420,8 @@ class DsInstance(service.Service):
         repl = replication.ReplicationManager(self.realm,
                                               self.fqdn,
                                               self.dm_password, conn=conn)
-        if self.promote:
-            repl.setup_promote_replication(self.master_fqdn)
-        else:
-            repl.setup_replication(self.master_fqdn,
-                                   r_binddn=DN(('cn', 'Directory Manager')),
-                                   r_bindpw=self.dm_password)
+        repl.setup_promote_replication(self.master_fqdn)
+
         self.run_init_memberof = repl.needs_memberof_fixup()
 
         # Now that the server is up make sure all changes happen against
