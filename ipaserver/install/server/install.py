@@ -760,6 +760,8 @@ def install(installer):
             realm_name, host_name, domain_name, dm_password,
             options.subject, 1101, 1100, None)
 
+    httpinstance.initialize_ra_agent_db()
+
     if setup_ca:
         if not options.external_cert_files and options.external_ca:
             # stage 1 of external CA installation

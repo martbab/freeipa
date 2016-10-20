@@ -816,6 +816,8 @@ def install(installer):
 
     options.dm_password = config.dirman_password
 
+    httpinstance.initialize_ra_agent_db()
+
     if config.setup_ca:
         options.realm_name = config.realm_name
         options.domain_name = config.domain_name
@@ -1420,6 +1422,8 @@ def promote(installer):
 
         # Always try to install DNS records
         install_dns_records(config, options, remote_api)
+
+        httpinstance.initialize_ra_agent_db()
 
         # Must install http certs before changing ipa configuration file
         # or certmonger will fail to contact the peer master

@@ -19,12 +19,14 @@
 
 from __future__ import print_function
 
+import binascii
 import os
 import os.path
 import pwd
 import re
 import dbus
 import shlex
+import stat
 import pipes
 import locale
 
@@ -110,6 +112,13 @@ def create_kdcproxy_user():
     )
 
 
+def initialize_ra_agent_db():
+    # FIXME: RA agent NSS db initialization
+    # do this at the beginning of server/replica install
+    http = HTTPInstance()
+    http.initialize_nssdb()
+
+
 class WebGuiInstance(service.SimpleServiceInstance):
     def __init__(self):
         service.SimpleServiceInstance.__init__(self, "ipa_webgui")
@@ -124,6 +133,8 @@ class HTTPInstance(service.Service):
 
         self.cert_nickname = cert_nickname
         self.ca_is_configured = True
+        self.ra_agent_db = certs.NSS_DIR
+        self.ra_agent_pwd = os.path.join(certs.NSS_DIR, 'pwdfile.txt')
 
     subject_base = ipautil.dn_attribute_property('_subject_base')
 
@@ -311,6 +322,55 @@ class HTTPInstance(service.Service):
             if certmonger_stopped:
                 certmonger.stop()
 
+    def __run_certutil(self, args, database=None, pwd_file=None, stdin=None,
+                       **kwargs):
+        if not database:
+            database = self.ra_agent_db
+        if not pwd_file:
+            pwd_file = self.ra_agent_pwd
+        new_args = [paths.CERTUTIL, "-d", database, "-f", pwd_file]
+        new_args = new_args + args
+        return ipautil.run(new_args, stdin, nolog=(pwd_file,), **kwargs)
+
+    def __create_ra_agent_db(self):
+        if ipautil.file_exists(self.ra_agent_db + "/cert8.db"):
+            ipautil.backup_file(self.ra_agent_db + "/cert8.db")
+            ipautil.backup_file(self.ra_agent_db + "/key3.db")
+            ipautil.backup_file(self.ra_agent_db + "/secmod.db")
+            ipautil.backup_file(self.ra_agent_db + "/pwdfile.txt")
+
+        if not ipautil.dir_exists(self.ra_agent_db):
+            os.mkdir(self.ra_agent_db)
+            os.chmod(self.ra_agent_db, 0o755)
+
+        # Create the password file for this db
+        hex_str = binascii.hexlify(os.urandom(10))
+        f = os.open(self.ra_agent_pwd, os.O_CREAT | os.O_RDWR)
+        os.write(f, hex_str)
+        os.close(f)
+        os.chmod(self.ra_agent_pwd, stat.S_IRUSR)
+
+        self.__run_certutil(["-N"])
+
+    def initialize_nssdb(self):
+        self.__create_ra_agent_db()
+        self.__fix_ra_perms()
+
+    def __fix_ra_perms(self):
+        os.chmod(self.ra_agent_db + "/cert8.db", 0o640)
+        os.chmod(self.ra_agent_db + "/key3.db", 0o640)
+        os.chmod(self.ra_agent_db + "/secmod.db", 0o640)
+
+        pent = pwd.getpwnam(constants.HTTPD_USER)
+        os.chown(self.ra_agent_db + "/cert8.db", 0, pent.pw_gid )
+        os.chown(self.ra_agent_db + "/key3.db", 0, pent.pw_gid )
+        os.chown(self.ra_agent_db + "/secmod.db", 0, pent.pw_gid )
+        os.chown(self.ra_agent_pwd, pent.pw_uid, pent.pw_gid)
+
+        # Fix SELinux permissions on the database
+        tasks.restore_context(certs.NSS_DIR + "/cert8.db")
+        tasks.restore_context(certs.NSS_DIR + "/key3.db")
+
     def __setup_ssl(self):
         fqdn = self.fqdn
 
@@ -349,22 +409,6 @@ class HTTPInstance(service.Service):
                                  db.passwd_fname, 'restart_httpd')
             db.create_signing_cert("Signing-Cert", "Object Signing Cert", ca_db)
             self.add_cert_to_service()
-
-        # Fix the database permissions
-        os.chmod(certs.NSS_DIR + "/cert8.db", 0o660)
-        os.chmod(certs.NSS_DIR + "/key3.db", 0o660)
-        os.chmod(certs.NSS_DIR + "/secmod.db", 0o660)
-        os.chmod(certs.NSS_DIR + "/pwdfile.txt", 0o660)
-
-        pent = pwd.getpwnam(HTTPD_USER)
-        os.chown(certs.NSS_DIR + "/cert8.db", 0, pent.pw_gid )
-        os.chown(certs.NSS_DIR + "/key3.db", 0, pent.pw_gid )
-        os.chown(certs.NSS_DIR + "/secmod.db", 0, pent.pw_gid )
-        os.chown(certs.NSS_DIR + "/pwdfile.txt", 0, pent.pw_gid )
-
-        # Fix SELinux permissions on the database
-        tasks.restore_context(certs.NSS_DIR + "/cert8.db")
-        tasks.restore_context(certs.NSS_DIR + "/key3.db")
 
     def __import_ca_certs(self):
         db = certs.CertDB(self.realm, subject_base=self.subject_base)
