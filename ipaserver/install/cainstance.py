@@ -69,10 +69,7 @@ from ipaserver.install import installutils
 from ipaserver.install import ldapupdate
 from ipaserver.install import replication
 from ipaserver.install import sysupgrade
-# pylint: disable=unused-import
-from ipaserver.install.dogtaginstance import (export_kra_agent_pem,
-                                              DogtagInstance)
-# pylint: enable=unused-import
+from ipaserver.install.dogtaginstance import DogtagInstance
 from ipaserver.plugins import ldap2
 
 # Python 3 rename. The package is available in "six.moves.http_client", but
