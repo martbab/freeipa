@@ -718,7 +718,7 @@ def install_check(installer):
             root_logger.debug('No IPA DNS servers, '
                               'skipping forward/reverse resolution check')
 
-        if options.setup_ca:
+        if ca_enabled:
             options.realm_name = config.realm_name
             options.host_name = config.host_name
             options.subject = config.subject_base
@@ -767,6 +767,7 @@ def install_check(installer):
             options.setup_ca, config.ca_ds_port, options.admin_password,
             ca_cert_file=cafile)
 
+    installer._ca_enabled = ca_enabled
     installer._remote_api = remote_api
     installer._fstore = fstore
     installer._sstore = sstore
@@ -776,6 +777,7 @@ def install_check(installer):
 @common_cleanup
 def install(installer):
     options = installer
+    ca_enabled = installer._ca_enabled
     fstore = installer._fstore
     sstore = installer._sstore
     config = installer._config
@@ -785,8 +787,6 @@ def install(installer):
 
     http_instance = httpinstance.HTTPInstance()
     http_instance.create_cert_db()
-
-    ca_enabled = ipautil.file_exists(config.dir + "/cacert.p12")
 
     # Create DS user/group if it doesn't exist yet
     dsinstance.create_ds_user()
@@ -821,7 +821,7 @@ def install(installer):
 
     options.dm_password = config.dirman_password
 
-    if config.setup_ca:
+    if ca_enabled:
         options.realm_name = config.realm_name
         options.domain_name = config.domain_name
         options.host_name = config.host_name
@@ -831,7 +831,7 @@ def install(installer):
     http = install_http(config, auto_redirect=not options.no_ui_redirect,
                         ca_is_configured=ca_enabled)
 
-    if config.setup_ca:
+    if ca_enabled:
         # Done after install_krb() because lightweight CA key
         # retrieval setup needs to create kerberos principal.
         ca.install_step_1(False, config, options)
@@ -841,11 +841,7 @@ def install(installer):
                          ipautil.realm_to_suffix(config.realm_name))
 
     if ca_enabled:
-        CA = cainstance.CAInstance(config.realm_name, certs.NSS_DIR)
-        CA.dm_password = config.dirman_password
-
-        CA.configure_certmonger_renewal()
-        CA.import_ra_cert(config.dir + "/ra.p12")
+        cainstance.export_kra_agent_pem()
 
     custodia = custodiainstance.CustodiaInstance(config.host_name,
                                                  config.realm_name)
@@ -1267,6 +1263,10 @@ def promote_check(installer):
                                   "CA is present on some master.")
                 raise ScriptError(rval=3)
         else:
+            if options.setup_ca:
+                root_logger.error("The remote master does not have a CA "
+                                  "installed, can't set up CA")
+                raise ScriptError(rval=3)
             ca_enabled = False
             if not options.dirsrv_cert_files:
                 root_logger.error("Cannot issue certificates: a CA is not "
@@ -1282,12 +1282,7 @@ def promote_check(installer):
                               "setup a KRA clone")
             raise ScriptError(rval=3)
 
-        if options.setup_ca:
-            if not ca_enabled:
-                root_logger.error("The remote master does not have a CA "
-                                  "installed, can't set up CA")
-                raise ScriptError(rval=3)
-
+        if ca_enabled:
             options.realm_name = config.realm_name
             options.host_name = config.host_name
             options.subject = config.subject_base
@@ -1364,6 +1359,7 @@ def promote_check(installer):
 @common_cleanup
 def promote(installer):
     options = installer
+    ca_enabled = installer._ca_enabled
     fstore = installer._fstore
     sstore = installer._sstore
     config = installer._config
@@ -1400,7 +1396,7 @@ def promote(installer):
     http_instance.create_cert_db()
 
     # FIXME: allow to use passed in certs instead
-    if installer._ca_enabled:
+    if ca_enabled:
         configure_certmonger()
 
     # Create DS user/group if it doesn't exist yet
@@ -1416,7 +1412,7 @@ def promote(installer):
         conn.connect(ccache=ccache)
 
         # Configure dirsrv
-        ds = install_replica_ds(config, options, installer._ca_enabled,
+        ds = install_replica_ds(config, options, ca_enabled,
                                 remote_api,
                                 promote=True, pkcs12_info=dirsrv_pkcs12_info)
 
@@ -1450,7 +1446,7 @@ def promote(installer):
             ipaconf.setOption('mode', 'production')
         ]
 
-        if installer._ca_enabled:
+        if ca_enabled:
             gopts.extend([
                 ipaconf.setOption('enable_ra', 'True'),
                 ipaconf.setOption('ra_plugin', 'dogtag'),
@@ -1471,15 +1467,10 @@ def promote(installer):
         os.chmod(target_fname, 0o644)   # must be readable for httpd
 
     custodia = custodiainstance.CustodiaInstance(config.host_name,
-                                                 config.realm_name,
-                                                 installer._ca_enabled)
+                                                 config.realm_name)
     custodia.create_replica(config.master_host_name)
 
     if installer._ca_enabled:
-        CA = cainstance.CAInstance(config.realm_name, certs.NSS_DIR)
-
-        CA.configure_certmonger_renewal()
-        CA.configure_agent_renewal()
         cainstance.export_kra_agent_pem()
 
     install_krb(
@@ -1491,7 +1482,7 @@ def promote(installer):
         config,
         auto_redirect=not options.no_ui_redirect,
         promote=True, pkcs12_info=http_pkcs12_info,
-        ca_is_configured=installer._ca_enabled)
+        ca_is_configured=ca_enabled)
 
     # Apply any LDAP updates. Needs to be done after the replica is synced-up
     service.print_msg("Applying LDAP updates")
@@ -1501,7 +1492,7 @@ def promote(installer):
     otpd.create_instance('OTPD', config.host_name, config.dirman_password,
                          ipautil.realm_to_suffix(config.realm_name))
 
-    if config.setup_ca:
+    if ca_enabled:
         options.realm_name = config.realm_name
         options.domain_name = config.domain_name
         options.host_name = config.host_name
